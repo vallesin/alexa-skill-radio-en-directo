@@ -1,0 +1,42 @@
+{
+  "manifest": {
+    "publishingInformation": {
+      "locales": {
+        "es-ES": {
+          "name": "La Guarida de Loba",
+          "summary": "La Voz de la Resistencia — con LobeznaNegra al micrófono.",
+          "description": "🎤 La Voz de la Resistencia – Con LobeznaNegra al Micrófono 🎶\n\nBienvenidos a la emisora donde la música cobra vida y la voz inconfundible de LobeznaNegra guía cada transmisión.\n\nEsta skill reproduce la emisión en directo de La Guarida de Loba cuando la emisora está emitiendo. Si en ese momento no hay emisión, la skill te lo dice por voz en lugar de reproducir nada.",
+          "examplePhrases": [
+            "Alexa, abre la guarida de loba",
+            "Alexa, pon la guarida de loba",
+            "Alexa, pide a la guarida de loba que reproduzca"
+          ],
+          "keywords": [
+            "radio",
+            "streaming",
+            "musica",
+            "guarida de loba",
+            "radio online"
+          ]
+        }
+      },
+      "isAvailableWorldwide": false,
+      "testingInstructions": "Skill en fase de desarrollo/privada, aun sin publicar. La radio emite de forma intermitente: para probar el caso 'en directo' hay que invocarla mientras la emisora esta emitiendo, y para probar el caso 'no esta emitiendo' hay que invocarla cuando este parada.",
+      "category": "MUSIC_AND_AUDIO",
+      "distributionCountries": []
+    },
+    "apis": {
+      "custom": {
+        "endpoint": {
+          "uri": "arn:aws:lambda:REGION:ACCOUNT_ID:function:NOMBRE_DE_TU_LAMBDA"
+        },
+        "interfaces": [
+          {
+            "type": "AUDIO_PLAYER"
+          }
+        ]
+      }
+    },
+    "manifestVersion": "1.0"
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "la guarida de loba",
+      "intents": [
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.NavigateHomeIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.PauseIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.ResumeIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.FallbackIntent",
+          "samples": []
+        },
+        {
+          "name": "PlayRadioIntent",
+          "slots": [],
+          "samples": [
+            "reproduce la guarida de loba",
+            "pon la guarida de loba",
+            "pon la radio",
+            "escucha la guarida de loba",
+            "escucha la radio",
+            "que suene la guarida de loba",
+            "reproduce la radio",
+            "empieza a reproducir",
+            "abre la radio",
+            "dale al play"
+          ]
+        }
+      ]
+    }
+  }
+}
