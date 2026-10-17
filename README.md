@@ -1,128 +1,151 @@
-# Skill de Alexa — La Guarida de Loba
+# Skill de Alexa para una radio online en directo
 
-Skill de Alexa (interfaz AudioPlayer) para escuchar en directo la radio online
-[La Guarida de Loba](https://laguaridadelobavip.radio12345.com/). La radio emite de forma
-intermitente: la skill comprueba en cada invocación si hay emisión en directo antes de
-reproducir nada, y si no la hay, responde solo por voz.
+Skill de Alexa (interfaz `AudioPlayer`) con una AWS Lambda sin dependencias que reproduce
+el stream de una emisora online **que emite de forma intermitente**. En cada invocación
+comprueba si hay emisión; si la hay, reproduce; si no, responde solo por voz.
 
-Estado: **TERMINADA (octubre 2026)**. Queda como skill privada en modo desarrollo (solo para
-los Echo de la cuenta que la creó); **no se va a publicar**, porque la propietaria de la
-radio desarrolló su propia skill. Prueba en frío con emisión real el 16/10/2026: suena a la
-primera sin la Raspberry.
+Se construyó para la radio *La Guarida de Loba* (alojada en listen2myradio / radio12345),
+pero la estructura y, sobre todo, las lecciones aprendidas sirven para cualquier emisora
+cuyo stream cambie de URL o no esté siempre activo.
+
+> **Estado:** terminada y probada con voz real en un Echo (octubre 2026). Se quedó como
+> skill privada en modo desarrollo y **no se publicó**, porque la propietaria de la radio
+> desarrolló la suya. El repositorio queda como referencia y caso de estudio.
+
+## Qué puede aprovechar quien lo lea
+
+- **Una skill de radio en directo mínima y completa:** modelo de interacción en español,
+  handler de Lambda sin dependencias, reintento de reproducción y prueba local sin AWS.
+- **Detectar si una radio intermitente está emitiendo** sin tocar el stream (ver abajo).
+- **Una lista de trampas reales** de Alexa, AWS y proveedores de streaming gratuitos, con
+  cómo se diagnosticó cada una (sección "Lecciones aprendidas").
 
 ## Estructura
 
 ```
 skill-package/
-  skill.json                              # manifiesto de la skill
-  interactionModels/custom/es-ES.json     # modelo de interacción (español)
+  skill.json                              # manifiesto de la skill (ARN de ejemplo)
+  interactionModels/custom/es-ES.json     # modelo de interacción (es-ES)
 lambda/
-  index.js                                # handler de la Lambda (CommonJS, sin dependencias)
+  index.js                                # handler (CommonJS, sin dependencias)
   test/local-test.js                      # prueba local sin AWS
-deploy/build/index.mjs                    # lo mismo en ESM: es lo que se pega en la Lambda
-raspberry/abrir-puerta.sh                 # script para la Raspberry (abre la "puerta" por IP)
-PRUEBA-EMISION.md, PRUEBA-EN-FRIO.md      # notas y protocolos de pruebas con emisión real
+deploy/build/index.mjs                    # el mismo handler en ESM, listo para pegar en Lambda
+raspberry/abrir-puerta.sh                 # script de apoyo que se usó en pruebas (ya no hace falta)
+cloudflare-worker/worker.js               # intento de proxy que no funcionó (ver lecciones)
+PRUEBA-EMISION.md, PRUEBA-EN-FRIO.md      # protocolos de prueba con emisión real
 ```
 
 ## Cómo funciona
 
-1. Al invocar la skill, la Lambda descarga la home de la radio
-   (`https://laguaridadelobavip.radio12345.com/`) y extrae la URL de stream del
-   `id="urladdress"` del HTML. **El token de la URL cambia en cada carga**, por eso no se
-   guarda una URL fija.
+1. Al invocar la skill, la Lambda descarga la web de la radio y extrae la URL del stream de
+   un elemento del HTML (`id="urladdress"`). **El token de la URL cambia en cada carga**,
+   así que nunca se guarda una URL fija.
 2. Si la URL tiene la forma del stream real (`*.listen2myradio.com[:puerto]/live.mp3?...`),
-   le dice a Alexa que la reproduzca (`AudioPlayer.Play`). No se comprueba el audio desde
-   la Lambda: el proveedor bloquea las IPs de AWS, pero el Echo conecta directamente desde
-   la red de casa.
-3. Si no coincide, responde solo con voz: "La Guarida de Loba no está emitiendo en directo
-   ahora mismo."
-4. Si el Echo no consigue reproducir (`PlaybackFailed`), se reintenta hasta 2 veces con una
-   URL nueva.
+   responde con `AudioPlayer.Play`. Si no coincide, es que no hay emisión (la web apunta
+   entonces a un MP3 de relleno en otro dominio) y responde solo con voz.
+3. Si el Echo no consigue reproducir (`AudioPlayer.PlaybackFailed`), la Lambda vuelve a
+   leer la web para obtener una URL fresca y reintenta hasta 2 veces. El número de intento
+   viaja en el `token` de la reproducción (`...:retryN`), así que no necesita estado.
 
-### Radio premium (desde el 04/10/2026)
+Para adaptarlo a otra emisora, cambia en `lambda/index.js` `HOME_URL`, el selector del
+HTML (`STREAM_URL_REGEX`) y el patrón de URL de directo (`LIVE_STREAM_URL_PATTERN`), y
+revisa el texto de las respuestas y el nombre de invocación en `skill-package/`.
 
-- La radio emite ahora desde la home `laguaridadelobavip` (radio_id 3438332).
-- El stream va por el **puerto 2199** (`https://us5new.listen2myradio.com:2199/live.mp3?...`);
-  el 443 rechaza conexiones. Alexa acepta ese puerto, así que la URL se manda tal cual.
-- La home vip da siempre una URL de `listen2myradio.com`, haya emisión o no. Si no hay fuente
-  conectada, el servidor responde `ICY 401` y el Echo falla en silencio.
+## Lecciones aprendidas
 
-### La "puerta" por IP (Raspberry)
+Todo lo siguiente se verificó en la práctica, no es teoría.
 
-El servidor del stream solo sirve audio a una IP después de que se haya llamado a
-`openfire.ajax.php` (lo hace la web de la radio al cargar y cada 100 min). El Echo no puede,
-pero comparte IP pública con la Raspberry, que lo hacía por cron cada 30 min
-(`raspberry/abrir-puerta.sh`). **Ya no hace falta** con la radio premium: la prueba en frío
-(ver `PRUEBA-EN-FRIO.md`) confirmó que la skill suena sin ella. El script se conserva solo
-como referencia.
+- **No compruebes el audio desde la Lambda.** El primer diseño hacía una petición al
+  stream para ver si llegaban bytes de audio. El proveedor devolvía a las IPs de AWS un
+  `200 OK` con 1 byte de HTML, y la skill decía "no está emitiendo" aunque la radio
+  estuviera en directo. El Echo, en cambio, conecta desde la red del usuario y funciona.
+  Solución: decidir solo por la forma de la URL que publica la web.
+- **Un 200 no significa audio.** Hay proveedores que rechazan con `200` y un cuerpo vacío.
+  Mira siempre `content-type` y `content-length`; un stream real llega con
+  `transfer-encoding: chunked` y sin `content-length`.
+- **El "directo" de la web puede mentir.** En el plan premium la web da siempre una URL de
+  stream, haya o no fuente conectada. Sin emisión el servidor responde `ICY 401` y el Echo
+  falla con `MEDIA_ERROR_INVALID_REQUEST`. Mejora pendiente: sondear el stream con una
+  petición corta antes de anunciar "en directo".
+- **Alexa acepta puertos no estándar.** El stream premium solo servía por el puerto 2199
+  (el 443 rechazaba la conexión) y el Echo lo reproduce sin problema. No hace falta montar
+  un proxy para quitar el puerto.
+- **Los mounts gratuitos se cortan solos.** La misma URL, sin cambiar nada, unas veces
+  sirve audio y otras un HTML de 1 byte. Un reintento con URL fresca cubre cortes de un par
+  de segundos; los más largos son del proveedor y no se arreglan desde la skill.
+- **Algunos servidores abren el stream por IP.** El proveedor de este caso solo servía audio
+  a una IP después de que esa IP llamara a un endpoint (`openfire.ajax.php`), cosa que hace
+  su web al cargarse. Como el Echo no puede, se usó una Raspberry en la misma red que lo
+  llamaba por cron (`raspberry/abrir-puerta.sh`). Con la radio premium **dejó de hacer falta**:
+  la prueba en frío (`PRUEBA-EN-FRIO.md`) confirmó que suena sin ella.
+- **Un proxy en Cloudflare Workers no sirvió** (`cloudflare-worker/worker.js`): el Worker
+  salía por IPv6 y el proveedor autorizaba por IPv4.
+- **Formato del handler en Lambda:** con runtime Node.js moderno el archivo es `index.mjs`
+  (ESM). Pegar CommonJS (`exports.handler`) da error. Por eso hay dos copias; para
+  regenerar el `.mjs` desde `lambda/index.js`, quita `"use strict";`, cambia
+  `exports.handler =` por `export const handler =` y borra `exports._internal`.
+- **Timeout de la Lambda:** el valor por defecto (3 s) se queda corto si lees una web
+  externa; se subió a 8 s.
+- **Frase de invocación en un solo turno:** el nombre de la skill debe ir justo después del
+  verbo ("Alexa, pide **a la guarida de loba** ayuda"); al final de la frase Alexa no lo
+  reconoce.
+- **Ficha de la skill:** las frases de ejemplo no pueden coincidir con frases por defecto de
+  Alexa ("hola", "ayuda"), y en el desplegable de categorías hay una entrada
+  "Kids - Music & Audio - Radio" antes que la correcta "Music & Audio - Radio".
+- **Beta Test sin certificar:** se puede invitar a oyentes por email durante 90 días (hasta
+  500), pero la skill solo es elegible tras rellenar *Privacy & Compliance*. El modelo de voz
+  es solo `es-ES`: quien tenga el Echo en `es-MX` o `es-US` no la reconocería.
 
 ## Despliegue manual
 
-No hay CI/CD ni ASK CLI configurado: son los pasos para hacerlo a mano desde las
-consolas de AWS y Alexa Developer.
+No hay CI/CD ni ASK CLI configurado. Son los pasos a mano desde las consolas de AWS y de
+Alexa Developer.
 
 ### 1. Lambda
 
-1. AWS Console → Lambda → **Crear función**.
-   - Runtime: **Node.js 24.x** (el archivo se llama `index.mjs`).
-   - Arquitectura: la que prefieras (no importa, no hay dependencias nativas).
-2. Pega el contenido de **`deploy/build/index.mjs`** (no el de `lambda/index.js`, que es
-   CommonJS y da error en una Lambda ESM) en el editor de código inline. No hace falta
-   `npm install` ni subir un zip, no tiene dependencias. Si cambias `lambda/index.js`,
-   regenera el `.mjs`: quita `"use strict";`, cambia `exports.handler =` por
-   `export const handler =` y borra la línea `exports._internal`.
-3. **Deploy**.
-4. Pestaña **Configuration → Triggers → Add trigger** → selecciona **Alexa Skills
-   Kit** (te pedirá el Skill ID una vez lo tengas del paso siguiente, o puedes dejarlo
-   sin restringir mientras esté en desarrollo).
-5. Copia el **ARN** de la función (arriba a la derecha) — lo necesitas para el
-   manifiesto de la skill.
+1. AWS Console → Lambda → **Crear función**, runtime **Node.js** (el archivo se llama
+   `index.mjs`). No hay dependencias nativas, la arquitectura da igual.
+2. Pega `deploy/build/index.mjs` en el editor de código. No hace falta `npm install`.
+3. En **Configuration → General** sube el timeout a 8 s.
+4. **Deploy**, y en **Triggers → Add trigger** elige **Alexa Skills Kit** (restringido al
+   Skill ID cuando lo tengas).
+5. Copia el **ARN** de la función.
+
+Si el editor web de la consola da problemas, sube un `.zip` con `index.mjs` desde
+**Actualizar → Actualizar desde un archivo .zip**; es más fiable.
 
 ### 2. Skill en Alexa Developer Console
 
-1. https://developer.amazon.com/alexa/console/ask → **Create Skill**.
-   - Nombre: "La Guarida de Loba" (o el que prefieras para la consola, no tiene que
-     coincidir con el nombre de invocación).
-   - Modelo: **Custom**.
-   - Método de alojamiento: **Provision your own** (vas a usar tu propia Lambda).
-2. En el editor de la skill, ve a **JSON Editor** (dentro de "Interaction Model") y
-   pega el contenido de `skill-package/interactionModels/custom/es-ES.json`.
-3. Ve a **Endpoint**, selecciona **AWS Lambda ARN** y pega el ARN copiado antes.
-4. En **Interfaces**, activa **Audio Player** (necesario para poder reproducir audio).
+1. https://developer.amazon.com/alexa/console/ask → **Create Skill** → modelo **Custom**,
+   alojamiento **Provision your own**.
+2. En **JSON Editor** pega `skill-package/interactionModels/custom/es-ES.json`.
+3. En **Endpoint** elige **AWS Lambda ARN** y pega el ARN.
+4. En **Interfaces** activa **Audio Player** (imprescindible para reproducir audio).
 5. Guarda y pulsa **Build Model**.
-6. Si prefieres editar el manifiesto completo (nombre público, categoría, frases de
-   ejemplo, etc.) en vez de rellenarlo a mano en la consola, puedes usar el contenido
-   de `skill-package/skill.json` como referencia — solo recuerda sustituir el ARN de
-   ejemplo por el real.
+6. `skill-package/skill.json` sirve de referencia para el manifiesto completo; sustituye el
+   ARN de ejemplo por el real.
 
 ### 3. Probar
 
-- **Simulador** (dentro de la propia consola, pestaña "Test", modo "Development"):
-  escribe o di `abre la guarida de loba` y comprueba la respuesta.
-- **Echo real**: en el móvil, app de Alexa → Skills y Juegos → pestaña "Tus Skills" →
-  debería aparecer automáticamente en desarrollo si usas la misma cuenta de Amazon con
-  la que creaste la skill.
-- Prueba **dos escenarios**:
-  1. Con la radio emitiendo en directo → debería empezar a sonar.
-  2. Con la radio parada → debería decir por voz que no está emitiendo, sin sonido.
-
-### 4. Publicar (descartado)
-
-No se va a publicar. Lo que sigue queda como referencia por si algún día cambia la decisión.
-
-Cuando se quiera abrir a cualquier usuario: añadir iconos de la skill (108×108 y
-512×512 px), una política de privacidad, pulir las frases de ejemplo del manifiesto, y
-enviarla a certificación desde la consola de Alexa Developer.
+- **Simulador** (pestaña Test, modo Development): `abre la guarida de loba`.
+- **Echo real:** aparece solo en la app de Alexa → Skills y Juegos → Tus Skills, si usas la
+  misma cuenta de Amazon con la que creaste la skill.
+- Prueba los dos casos: con la radio emitiendo debe sonar; con la radio parada debe decir
+  por voz que no emite, sin sonido.
 
 ## Prueba local sin AWS
 
-Con Node.js 20+ instalado:
+Con Node.js 20 o superior:
 
 ```bash
 node lambda/test/local-test.js
 ```
 
-Hace una petición real a la web de la radio y muestra si el handler decide reproducir
-(con qué URL) o responder que no está emitiendo. El resultado depende de si la emisora
-está emitiendo en ese momento — para probar la rama "no está emitiendo" hay que
-ejecutarlo cuando la radio esté parada.
+Hace una petición real a la web de la radio y muestra si el handler decide reproducir (y con
+qué URL) o responder que no está emitiendo. El resultado depende de si la emisora está en
+directo en ese momento.
+
+## Licencia
+
+MIT. Ver `LICENSE`. El nombre y la marca de la emisora pertenecen a sus propietarios y no
+se incluye su logotipo.
